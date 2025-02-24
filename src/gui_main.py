@@ -4,30 +4,50 @@ from tkinter import ttk, messagebox
 import threading
 from bassline_generator_core import BasslineGenerator
 from dice_roller import DiceRoller
+from midi_preview import MIDIPreview
+import pygame
+import logging
+
+# Configure logging system with standard formatting
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 class BasslineGeneratorGUI:
+    """Main GUI application for Bassline Generator with integrated MIDI preview"""
+    
     def __init__(self, root):
+        """Initialize the GUI application and its components"""
+        logger.debug("Initializing Bassline Generator GUI")
         self.root = root
         self.root.title("Bassline Generator")
         self.root.geometry("800x600")
         
-        # Initialize backend components
-        self.generator = BasslineGenerator()
+        # Initialize core components
+        try:
+            self.generator = BasslineGenerator()
+            self.preview_system = MIDIPreview()
+            logger.debug("Core components initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize core components: {e}")
+            raise
         
-        # Create main container with padding
+        # Create main container
         self.main_frame = ttk.Frame(root, padding="10")
         self.main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
+        # Build UI components
         self._create_parameter_controls()
         self._create_generation_controls()
         self._create_status_area()
-        
-        # Apply modern styling
         self._apply_styling()
+        
+        logger.debug("GUI initialization complete")
 
     def _create_parameter_controls(self):
-        """Create controls for musical parameters"""
-        # Parameters Frame
+        """Create and configure musical parameter input controls"""
         params_frame = ttk.LabelFrame(self.main_frame, text="Musical Parameters", padding="5")
         params_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
         
@@ -87,83 +107,94 @@ class BasslineGeneratorGUI:
                                 variable=self.density_var,
                                 orient=tk.HORIZONTAL)
         density_scale.grid(row=5, column=1, sticky="ew", pady=2)
+        
+        # Bass Instrument Selection
+        ttk.Label(params_frame, text="Bass Instrument:").grid(row=6, column=0, sticky=tk.W, pady=2)
+        self.instrument_var = tk.StringVar(value='Synth Bass 1')
+        instrument_combo = ttk.Combobox(params_frame,
+                                      textvariable=self.instrument_var,
+                                      values=self.preview_system.get_available_instruments(),
+                                      state='readonly')
+        instrument_combo.grid(row=6, column=1, sticky="ew", pady=2)
+        
+        # Bind instrument change event
+        instrument_combo.bind('<<ComboboxSelected>>', self._on_instrument_change)
+
+    def _on_instrument_change(self, event):
+        """Handle instrument selection changes"""
+        try:
+            self.preview_system.set_instrument(self.instrument_var.get())
+            self.status_text.insert(tk.END, f"Changed instrument to: {self.instrument_var.get()}\n")
+            self.status_text.see(tk.END)
+        except Exception as e:
+            logger.error(f"Failed to change instrument: {e}")
+            messagebox.showerror("Error", f"Failed to change instrument: {e}")
 
     def _create_generation_controls(self):
-        """Create controls for bassline generation"""
+        """Create preview and generation control buttons"""
         controls_frame = ttk.Frame(self.main_frame)
         controls_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=10)
         
-        # Generate Button
-        self.generate_btn = ttk.Button(controls_frame,
+        # Preview Controls
+        preview_frame = ttk.LabelFrame(controls_frame, text="Preview", padding="5")
+        preview_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        self.preview_btn = ttk.Button(preview_frame,
+                                    text="▶ Preview",
+                                    command=self._preview_bassline)
+        self.preview_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.stop_preview_btn = ttk.Button(preview_frame,
+                                         text="■ Stop",
+                                         command=self._stop_preview)
+        self.stop_preview_btn.pack(side=tk.LEFT, padx=5)
+        self.stop_preview_btn.state(['disabled'])
+        
+        # Generation Controls
+        generate_frame = ttk.LabelFrame(controls_frame, text="Generation", padding="5")
+        generate_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        self.generate_btn = ttk.Button(generate_frame,
                                      text="Generate Bassline",
                                      command=self._generate_bassline)
         self.generate_btn.pack(side=tk.LEFT, padx=5)
         
-        # Dice Roll Button
-        self.dice_roll_btn = ttk.Button(controls_frame,
+        self.dice_roll_btn = ttk.Button(generate_frame,
                                       text="Random Parameters",
                                       command=self._roll_parameters)
         self.dice_roll_btn.pack(side=tk.LEFT, padx=5)
 
     def _create_status_area(self):
-        """Create status display area"""
+        """Create status display area with scrolling text widget"""
         status_frame = ttk.LabelFrame(self.main_frame, text="Status", padding="5")
         status_frame.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
         
         self.status_text = tk.Text(status_frame, height=10, width=60, wrap=tk.WORD)
         self.status_text.pack(fill=tk.BOTH, expand=True)
         
-        # Add scrollbar
         scrollbar = ttk.Scrollbar(status_frame, orient=tk.VERTICAL, command=self.status_text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.status_text.configure(yscrollcommand=scrollbar.set)
 
-    def _apply_styling(self):
-        """Apply modern styling to the GUI"""
-        style = ttk.Style()
-        style.configure("TButton", padding=6)
-        style.configure("TFrame", padding=5)
-        style.configure("TLabelframe", padding=10)
-        
-        # Configure grid weights for resizing
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
-        self.main_frame.columnconfigure(1, weight=1)
-
-    def _generate_bassline(self):
-        """Handle bassline generation in a separate thread"""
+    def _preview_bassline(self):
+        """Generate and play a preview of the current bassline settings"""
+        logger.debug("Starting bassline preview generation")
         try:
-            # Disable controls during generation
-            self.generate_btn.state(['disabled'])
-            self.dice_roll_btn.state(['disabled'])
+            # Update UI state
+            self.preview_btn.state(['disabled'])
+            self.stop_preview_btn.state(['!disabled'])
             
-            # Update status
-            self.status_text.insert(tk.END, "Generating bassline...\n")
-            self.status_text.see(tk.END)
-            
-            # Get parameters
+            # Get current parameters
             params = {
                 'root_note': self.root_note_var.get(),
                 'scale_type': self.scale_type_var.get(),
                 'genre': self.genre_var.get(),
                 'tempo': int(self.tempo_var.get()),
-                'bars': int(self.bars_var.get()),
-                'note_density': self.density_var.get()
+                'bars': int(self.bars_var.get()),  # Use full bar count for preview
+                'note_density': float(self.density_var.get())
             }
+            logger.debug(f"Preview parameters: {params}")
             
-            # Start generation in separate thread
-            thread = threading.Thread(target=self._generate_bassline_thread, args=(params,))
-            thread.daemon = True
-            thread.start()
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to generate bassline: {str(e)}")
-            self.generate_btn.state(['!disabled'])
-            self.dice_roll_btn.state(['!disabled'])
-
-    def _generate_bassline_thread(self, params):
-        """Generate bassline in separate thread"""
-        try:
             # Generate bassline
             bassline = self.generator.generate_bassline(
                 params['root_note'],
@@ -173,24 +204,104 @@ class BasslineGeneratorGUI:
                 params['note_density']
             )
             
-            # Create MIDI file
+            if not bassline:
+                raise ValueError("No notes generated for preview")
+            
+            # Create and play preview
+            preview_path = self.preview_system.create_preview(bassline, params['tempo'])
+            self.preview_system.play_preview(preview_path)
+            
+            # Update status
+            self.status_text.insert(tk.END, f"Playing preview ({params['bars']} bars)...\n")
+            self.status_text.see(tk.END)
+            
+            # Start monitoring
+            self._monitor_preview()
+            
+        except Exception as e:
+            logger.error(f"Preview failed: {e}")
+            messagebox.showerror("Preview Error", str(e))
+            self._stop_preview()
+
+    def _stop_preview(self):
+        """Stop the current preview playback"""
+        logger.debug("Stopping preview playback")
+        try:
+            self.preview_system.stop_preview()
+            self.preview_btn.state(['!disabled'])
+            self.stop_preview_btn.state(['disabled'])
+            
+            self.status_text.insert(tk.END, "Preview stopped\n")
+            self.status_text.see(tk.END)
+            
+        except Exception as e:
+            logger.error(f"Error stopping preview: {e}")
+            messagebox.showerror("Preview Error", f"Failed to stop preview: {e}")
+
+    def _monitor_preview(self):
+        """Monitor preview playback status"""
+        try:
+            if self.preview_system.is_playing():
+                self.root.after(100, self._monitor_preview)
+            else:
+                self._stop_preview()
+        except Exception as e:
+            logger.error(f"Error monitoring preview: {e}")
+            self._stop_preview()
+
+    def _generate_bassline(self):
+        """Handle full bassline generation in a separate thread"""
+        try:
+            self.generate_btn.state(['disabled'])
+            self.dice_roll_btn.state(['disabled'])
+            
+            self.status_text.insert(tk.END, "Generating bassline...\n")
+            self.status_text.see(tk.END)
+            
+            params = {
+                'root_note': self.root_note_var.get(),
+                'scale_type': self.scale_type_var.get(),
+                'genre': self.genre_var.get(),
+                'tempo': int(self.tempo_var.get()),
+                'bars': int(self.bars_var.get()),
+                'note_density': self.density_var.get()
+            }
+            
+            thread = threading.Thread(target=self._generate_bassline_thread, args=(params,))
+            thread.daemon = True
+            thread.start()
+            
+        except Exception as e:
+            logger.error(f"Failed to start generation: {e}")
+            messagebox.showerror("Error", f"Failed to generate bassline: {e}")
+            self._enable_controls()
+
+    def _generate_bassline_thread(self, params):
+        """Generate bassline in background thread"""
+        try:
+            bassline = self.generator.generate_bassline(
+                params['root_note'],
+                params['scale_type'],
+                params['genre'],
+                params['bars'],
+                params['note_density']
+            )
+            
             filename = f"{params['genre'].lower()}_bassline_{params['root_note']}_{params['scale_type']}_{params['tempo']}bpm.mid"
             filepath = self.generator.create_midi_file(bassline, filename, params['tempo'])
             
-            # Update status
             self.root.after(0, self._update_status, f"Successfully generated: {filepath}\n")
             
         except Exception as e:
-            self.root.after(0, messagebox.showerror, "Error", f"Generation failed: {str(e)}")
+            logger.error(f"Generation failed: {e}")
+            self.root.after(0, messagebox.showerror, "Error", f"Generation failed: {e}")
         finally:
-            # Re-enable controls
             self.root.after(0, self._enable_controls)
 
     def _roll_parameters(self):
-        """Generate random parameters"""
+        """Generate random musical parameters"""
         params = DiceRoller.roll_parameters(self.generator)
         
-        # Update GUI controls
         self.root_note_var.set(params['root_note'])
         self.scale_type_var.set(params['scale_type'])
         self.genre_var.set(params['genre'])
@@ -198,12 +309,16 @@ class BasslineGeneratorGUI:
         self.bars_var.set(str(params['bars']))
         self.density_var.set(params['note_density'])
         
-        # Update status
+        # Randomly select an instrument
+        instruments = self.preview_system.get_available_instruments()
+        self.instrument_var.set(random.choice(instruments))
+        self.preview_system.set_instrument(self.instrument_var.get())
+        
         self.status_text.insert(tk.END, "Generated random parameters\n")
         self.status_text.see(tk.END)
 
     def _update_status(self, message):
-        """Update status text"""
+        """Update status text display"""
         self.status_text.insert(tk.END, message)
         self.status_text.see(tk.END)
 
@@ -212,10 +327,46 @@ class BasslineGeneratorGUI:
         self.generate_btn.state(['!disabled'])
         self.dice_roll_btn.state(['!disabled'])
 
+    def _apply_styling(self):
+        """Apply visual styling to GUI elements"""
+        style = ttk.Style()
+        style.configure("TButton", padding=6)
+        style.configure("TFrame", padding=5)
+        style.configure("TLabelframe", padding=10)
+        
+        # Enable proper grid weight distribution
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+        self.main_frame.columnconfigure(1, weight=1)
+        
+        # Apply specific styling for instrument controls
+        style.configure("Instrument.TCombobox", padding=4)
+
+    def cleanup(self):
+        """Clean up resources before shutdown"""
+        logger.debug("Performing application cleanup")
+        if hasattr(self, 'preview_system'):
+            self.preview_system.cleanup()
+
 def main():
+    """Application entry point"""
+    logger.info("Starting Bassline Generator application")
+    
+    # Initialize random seed for consistent behavior
+    import random
+    random.seed()
+    
     root = tk.Tk()
     app = BasslineGeneratorGUI(root)
-    root.mainloop()
+    
+    try:
+        root.mainloop()
+    except Exception as e:
+        logger.error(f"Application error: {e}")
+        messagebox.showerror("Error", f"Application error: {e}")
+    finally:
+        logger.info("Shutting down application")
+        app.cleanup()
 
 if __name__ == "__main__":
     main()

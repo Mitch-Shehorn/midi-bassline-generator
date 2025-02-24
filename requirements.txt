@@ -1,6 +1,7 @@
 # Core dependencies
-midiutil>=1.2.1    # For MIDI file creation
+midiutil>=1.2.1       # For MIDI file creation
 python-rtmidi>=1.4.9
-tkinter            # Included in Python standard library, listed for documentation
+pygame>=2.6.1
+tkinter               # Included in Python standard library, listed for documentation
 # Package versions are specified to ensure compatibility
 # Install using: pip install -r requirements.txt
