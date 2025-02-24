@@ -5,7 +5,8 @@
 
 -Written in Python via VSCode
 
--Currently the midi files are saved to the desktop.
+-Midi files are saved to the desktop.
 
 -.bat files added to execute the code without running an IDE.
 
+-audio preview added
